@@ -36,7 +36,7 @@ You accept full responsibility for ensuring your actions comply with all legal a
 ---
 
 ## Requirements
-- Edge 147.0.3912.98 or older
+- Any Edge versions that's Chromium based (from version 79 and newer, including 147.0.3912.98 and any **future** version, as Microsoft won't change this feature).
 - .NET Framework **4.8.1** (changed from 3.5 originally)
 - Can be run without Adminstrator rights, but will only be able to access Edge processes ran by the same user
 - If run with Administrator privileges, the program can access and read memory from other users’ Edge processes on the same machine 
